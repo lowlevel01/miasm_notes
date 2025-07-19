@@ -3,8 +3,116 @@
 A concise and structured summary of the key components and APIs in the [Miasm](https://github.com/cea-sec/miasm) reverse engineering framework. This guide is designed as a quick reference to the internal mechanics and scripting capabilities of Miasm.
 
 # Table of Contents
+- [Expressions](#expressions)
 - [LocationDB](#locationdb)
 
+
+# Expressions
+
+Miasm provides an intermediate representation (IR) to represent the effects of a source code. The benefits of using an IR are:
+
+- A unified representation that does not depend on the source architecture
+- A minimal language
+- The side effects are explicit (e.g. `A + B` will not implicitly update flags)
+
+Miasm's IR implementation is located in `miasm.expression.expression`, with `Expr*` objects.
+
+## Rules
+
+- Each expression has a size (in bits)
+- Some expressions need this size at creation time, others compute it from their arguments
+
+## IR Words
+
+| Word           | Meaning             |
+|----------------|---------------------|
+| `ExprAssign`   | `A = B`             |
+| `ExprInt`      | `0x18`              |
+| `ExprId`       | `EAX`               |
+| `ExprLoc`      | `label_1`           |
+| `ExprCond`     | `A ? B : C`         |
+| `ExprMem`      | `@16[ESI]`          |
+| `ExprOp`       | `A + B`             |
+| `ExprSlice`    | `AH = EAX[8:16]`    |
+| `ExprCompose`  | `AX = AH.AL`        |
+
+## ExprOp Rules
+
+- In most cases, arguments must have the same size
+- Size of `ExprOp` is the size of its arguments
+- Some exceptions (e.g. `==`, `parity`) have size 1
+- `+`, `^`, `|`, ... are n-ary operations
+- `-` is always unary
+- `parity` always has size 1
+
+## ExprAssign
+
+- Represents assignment `dst = src`
+- Not a word of the language: cannot be used inside another expression
+
+## ExprCond
+
+- Ternary conditional: `cond ? src1 : src2`
+- `src1` and `src2` must have the same size
+- `cond` may differ in size
+
+## ExprSlice
+
+- Extracts bit slice from an expression
+- Size = `stop - start`
+
+## ExprCompose
+
+- Concatenates two expressions
+- Size = sum of argument sizes
+
+## ExprLoc
+
+- Represents a location (jump/call target)
+- Wraps a `LocKey`, which contains info like offset or name
+
+## Helpers
+
+- `a.mask` → returns mask expression of same size
+- `a.size` → returns expression size
+- `repr(expr)` → printable/copyable form
+- `expr.zeroExtend(size)` / `signExtend(size)` → size extension
+- `expr.msb()` → most significant bit
+- `expr.replace_expr({old: new})` → substitution
+- Type tests:
+  - `is_id`, `is_int`, `is_op`, `is_op("+")`, `is_op("&")`
+
+## Expression Graphs
+
+- Expressions are recursive and can be viewed as graphs
+- Use `.graph()` method
+- Graph is a `DiGraph` from `miasm.core.graph`
+- Supports:
+  - `.dot()` for Graphviz
+  - node/edge access
+  - dominators, successors, etc.
+
+## Expression Simplification
+
+- Implemented in `miasm.expression.simplifications`
+- Use `expr_simp` to apply transformation rules
+- Simplifies:
+  - Constants (e.g. `0x10 + -1 = 0xF`)
+  - Bit slicing
+  - Algebraic identities (e.g. `a + a - a = a`)
+  - Replacements (e.g. evaluate with `a = 0x10`)
+- Use `ExpressionSimplifier.enable_passes(...)` to activate additional rules
+
+## Custom Passes Example
+
+- Boolean `ExprCond` transformed to `<`:
+  ```python
+  ((x - y) ^ ((x ^ y) & ((x - y) ^ x)))[31:32]
+  ```
+- Enable with:
+  ```python
+  expr_simp_cond.enable_passes(ExpressionSimplifier.PASS_COND)
+  ```
 
 # LocationDB
 
